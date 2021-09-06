@@ -48,6 +48,11 @@ renm_R_names <- paste0("R_",R_names[-1])
 names(R_TBL_ATTEMPT_TABLE)[-1] <- paste0("R_",R_names[-1])
 
 
+################################################## Join with DB Backup #####################################
+SLA_temp_conn <- DBI::dbConnect(RSQLite::SQLite(), "db/SLA_temp_DB.sqlite")
+
+
+
 # Correct for LTL (To be implemented)
 up_timestamp <- gsub(pattern = "[^[:alnum:]]", replacement = "",Sys.time())
 
