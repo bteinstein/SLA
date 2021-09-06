@@ -5,8 +5,8 @@ library(tidyr)
 library(dbplyr)
 library(data.table)
 
-source("~/Documents/Project/SLA/data/create_empty_data_frame.R")
-source("~/Documents/Project/SLA/scripts/A_FIRST_ATTEMPT_SLA/function_first_attempt.R")
+source("./scripts/LOAD_DATA/create_empty_data_frame.R")
+source("./scripts/A_FIRST_ATTEMPT_SLA/function_first_attempt.R")
 
 # Load Data
 # 1. IssueParcel
@@ -16,7 +16,6 @@ IssueParcel <- readr::read_csv("data/refresher/IssueParcel.csv",
 Delivery <- readr::read_csv('./data/refresher/Delivery 2021-08.csv', col_types = 'c??TT')
 # 3. Pickup
 Pickup <- readr::read_csv('./data/refresher/Pickup 2021-08.csv', col_types = 'c?TT')
-
 
 
 # Prep temp
@@ -51,7 +50,7 @@ names(R_TBL_ATTEMPT_TABLE)[-1] <- paste0("R_",R_names[-1])
 ################################################## Join with DB Backup #####################################
 SLA_temp_conn <- DBI::dbConnect(RSQLite::SQLite(), "db/SLA_temp_DB.sqlite")
 
-
+# .....
 
 # Correct for LTL (To be implemented)
 up_timestamp <- gsub(pattern = "[^[:alnum:]]", replacement = "",Sys.time())

@@ -6,7 +6,7 @@ library(dbplyr)
 library(data.table)
 
 source("~/Documents/Project/SLA/data/create_empty_data_frame.R")
-source("~/Documents/Project/SLA/scripts/FIRST_ATTEMPT_SLA/function_first_attempt.R")
+source("~/Documents/Project/SLA/scripts/A_FIRST_ATTEMPT_SLA/function_first_attempt.R")
 
 # Load Data
 # 1. IssueParcel
