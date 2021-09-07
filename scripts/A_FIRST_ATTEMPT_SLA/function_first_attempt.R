@@ -45,7 +45,7 @@ get_last_attempt_time_site <- function(attempts_df){
 
 
 get_attempt_counter <- function(attempts_df) {
-  attempt_temp_df %>% 
+  attempts_df %>% 
     count(AWB,type) %>% 
     pivot_wider(names_from = type, values_from = n) %>% 
     select(AWB, IssueParcel_Scan_Count = ISP, Delivery_Scan_Count = DLV) %>% 

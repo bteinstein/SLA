@@ -4,8 +4,9 @@ library(dplyr)
 library(tidyr)
 library(dbplyr)
 library(data.table)
+library(DBI)
 
-source("./scripts/LOAD_DATA/create_empty_data_frame.R")
+source("./scripts/2_LOAD_DATA/create_empty_data_frame.R")
 source("./scripts/A_FIRST_ATTEMPT_SLA/function_first_attempt.R")
 
 # Load Data
@@ -48,29 +49,112 @@ names(R_TBL_ATTEMPT_TABLE)[-1] <- paste0("R_",R_names[-1])
 
 
 ################################################## Join with DB Backup #####################################
-SLA_temp_conn <- DBI::dbConnect(RSQLite::SQLite(), "db/SLA_temp_DB.sqlite")
+
+####################### Connect to DB ############# 
+#### Note some issue with joining on two different sources :: https://github.com/r-dbi/bigrquery/issues/219
+conn_SLA_temp_db <- create_SLA_temp_DBConnection()
 
 # .....
+# Write R_TBL_ATTEMPT_TABLE to local db
+dbWriteTable(conn_SLA_temp_db, "TBL_ATTEMPTS_TEMP", R_TBL_ATTEMPT_TABLE, overwrite = T) # always overwrite
 
-# Correct for LTL (To be implemented)
+ATTEMPT_TBL_ref <- tbl(conn_SLA_temp_db, "TBL_ATTEMPTS")
+ATTEMPT_TBL_R <- tbl(conn_SLA_temp_db, "TBL_ATTEMPTS_TEMP")
+
+Merge_TBL_ATTEMPT <- ATTEMPT_TBL_R %>% 
+  left_join(ATTEMPT_TBL_ref)
+
+
+################################################ Subsetting - Separate Insert and upload ################################
+UPT_ATTEMPT_TBL <- filter(Merge_TBL_ATTEMPT, !is.na(upload_time)) %>% collect() # Pull to R Session (I don't like trouble)
+INS_TBL_ATTEMPT <- filter(Merge_TBL_ATTEMPT, is.na(upload_time))
+
+
+################################################# Run Calculation on the Update-Subset #######################################
+## "AWB"                      "R_First_Attempt_Time"     "R_First_Attempt_Site"     "R_First_Attempt_Type"     
+#  "R_Last_Attempt_Time"      "R_Last_Attempt_Site"      
+# "R_IssueParcel_Scan_Count" "R_Delivery_Scan_Count"    "R_Max_Attempt"   
+
+UPT_ATTEMPT_TBL <- UPT_ATTEMPT_TBL %>% 
+  # U_First_Attempt_Time
+  mutate(U_First_Attempt_Time = case_when(is.na(R_First_Attempt_Time) ~ First_Attempt_Time,
+                                            R_First_Attempt_Time <= First_Attempt_Time ~ R_First_Attempt_Time,
+                                            TRUE ~ First_Attempt_Time)) %>% 
+  # U_First_Attempt_Site
+  mutate(U_First_Attempt_Site = case_when(is.na(R_First_Attempt_Time) ~ First_Attempt_Site,
+                                          R_First_Attempt_Time <= First_Attempt_Time ~ R_First_Attempt_Site,
+                                          TRUE ~ First_Attempt_Site)) %>% 
+  # U_First_Attempt_Type
+  mutate(U_First_Attempt_Type = case_when(is.na(R_First_Attempt_Time) ~ First_Attempt_Type,
+                                          R_First_Attempt_Time <= First_Attempt_Time ~ R_First_Attempt_Type,
+                                          TRUE ~ First_Attempt_Type)) %>% 
+  # U_Last_Attempt_Time
+  mutate(U_Last_Attempt_Time = case_when(is.na(R_Last_Attempt_Time) ~ Last_Attempt_Time,
+                                         R_Last_Attempt_Time >= Last_Attempt_Time ~ R_Last_Attempt_Time,
+                                          TRUE ~ Last_Attempt_Time)) %>% 
+  # R_Last_Attempt_Site
+  mutate(U_Last_Attempt_Site = case_when(is.na(R_Last_Attempt_Time) ~ Last_Attempt_Site,
+                                         R_Last_Attempt_Time >= Last_Attempt_Time ~ R_Last_Attempt_Site,
+                                         TRUE ~ Last_Attempt_Site)) %>% 
+  rowwise() %>%
+  # R_IssueParcel_Scan_Count
+  mutate(U_IssueParcel_Scan_Count = sum(R_IssueParcel_Scan_Count,IssueParcel_Scan_Count, na.rm = T)) %>%
+  # R_Delivery_Scan_Count
+  mutate(U_Delivery_Scan_Count = sum(R_Delivery_Scan_Count,Delivery_Scan_Count, na.rm = T)) %>%
+  # R_Max_Attempt
+  mutate(U_Max_Attempt = sum(U_Delivery_Scan_Count,R_IssueParcel_Scan_Count, na.rm = T))
+  
+# left_join( 
+#   UPT_ATTEMPT_TBL %>% 
+#   select(AWB, R_IssueParcel_Scan_Count, IssueParcel_Scan_Count,R_Delivery_Scan_Count,Delivery_Scan_Count) %>% 
+#   group_by(AWB) %>% 
+#   # mutate(U_IssueParcel_Scan_Count = R_IssueParcel_Scan_Count+IssueParcel_Scan_Count) %>% 
+#   mutate(U_IssueParcel_Scan_Count = R_IssueParcel_Scan_Count+IssueParcel_Scan_Count ) %>% 
+#   mutate(U_Delivery_Scan_Count = R_Delivery_Scan_Count+Delivery_Scan_Count) 
+# )
+
+########################################################## Insert ######################################################
 up_timestamp <- gsub(pattern = "[^[:alnum:]]", replacement = "",Sys.time())
+# .....
+INS_TBL_ATTEMPT <- INS_TBL_ATTEMPT %>% select(AWB, !contains('R_')) %>%  
+  mutate(upload_time = up_timestamp) %>% collect()
 
-R_TBL_ATTEMPT_TABLE %>% 
-  mutate(upload_time = up_timestamp)
-############################################################ Clean up #############################################################################
-rm(Delivery, IssueParcel)
-rm(R_f_attempt_df, R_l_attempt_df, R_attempt_counter)
+names(INS_TBL_ATTEMPT)
+# Write INS_TBL_ATTEMPT to local db
+dbWriteTable(conn_SLA_temp_db, "TBL_ATTEMPTS", INS_TBL_ATTEMPT, append = T) # always overwrite
 
-########################################################## 01. Connect to DB ###############################################################################
-SLA_temp_db <- DBI::dbConnect(RSQLite::SQLite(), "db/SLA_temp_DB.sqlite")
 
-######################################################## 03. Write to DB #################################################################################
-# Update
-##### $sql="UPDATE checkpoints SET CP2_Arrivale='".$cp."00' WHERE Team='".$Team."';
-copy_to(dest = SLA_temp_db, df = R_TBL_ATTEMPT_TABLE)
+########################################################## Update DB  ######################################################
+WRT_UPT_ATTEMPT_TBL <- UPT_ATTEMPT_TBL %>% select(AWB, contains('U_')) %>%  
+  mutate(upload_time = up_timestamp) #%>% collect()
+# Rename
+names(WRT_UPT_ATTEMPT_TBL) <- gsub(pattern = "U_",replacement = "", names(WRT_UPT_ATTEMPT_TBL) )
+names(WRT_UPT_ATTEMPT_TBL) 
 
+# Write WRT_UPT_ATTEMPT_TBL to local db
+dbWriteTable(conn_SLA_temp_db, "TEMP_UPT_ATTEMPT_TBL", WRT_UPT_ATTEMPT_TBL, overwrite = T) # always overwrite
+
+
+upd_sql <- 'UPDATE TBL_ATTEMPTS
+SET(First_Attempt_Time,First_Attempt_Site,First_Attempt_Type,Last_Attempt_Time,Last_Attempt_Site,IssueParcel_Scan_Count,Delivery_Scan_Count,Max_Attempt) = (TEMP_UPT_ATTEMPT_TBL.First_Attempt_Time, TEMP_UPT_ATTEMPT_TBL.First_Attempt_Site, TEMP_UPT_ATTEMPT_TBL.First_Attempt_Type, TEMP_UPT_ATTEMPT_TBL.Last_Attempt_Time, TEMP_UPT_ATTEMPT_TBL.Last_Attempt_Site,TEMP_UPT_ATTEMPT_TBL.IssueParcel_Scan_Count, TEMP_UPT_ATTEMPT_TBL.Delivery_Scan_Count, TEMP_UPT_ATTEMPT_TBL.Max_Attempt)
+FROM TEMP_UPT_ATTEMPT_TBL
+WHERE TEMP_UPT_ATTEMPT_TBL.AWB = TBL_ATTEMPTS.AWB;'
+
+
+
+dbBegin(conn_SLA_temp_db)
+dbExecute(conn_SLA_temp_db, upd_sql)
+dbCommit(conn_SLA_temp_db)
+# dbRollback(conn_SLA_temp_db)
+
+
+######################################################### Clean ups ####################################################
+dbListTables(conn_SLA_temp_db)
+dbRemoveTable(conn_SLA_temp_db, "TBL_ATTEMPTS_TEMP")
+dbRemoveTable(conn_SLA_temp_db, "TEMP_UPT_ATTEMPT_TBL")
+rm(R_attempt_temp_df, R_TBL_ATTEMPT_TABLE, U_TBL_ATTEMPT_TABLE, WRT_UPT_ATTEMPT_TBL,UPT_ATTEMPT_TBL,INS_TBL_ATTEMPT,ATTEMPT_TBL_ref)
 ########################################################## 02. Querries ########################################################################
-tbl(SLA_temp_db, sql("SELECT * FROM R_TBL_ATTEMPT_TABLE"))
+tbl(conn_SLA_temp_db, sql("SELECT * FROM TBL_ATTEMPTS"))
 
 ##
 

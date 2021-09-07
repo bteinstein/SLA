@@ -1,4 +1,12 @@
 library(dplyr)
+
+####### IsMasterWaybill (Not Done) ########
+
+
+
+
+
+###### Weekdays #######
 Nweekdays <- Vectorize(
   function(a, b, weekend=11)
   {

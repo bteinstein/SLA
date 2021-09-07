@@ -4,9 +4,10 @@ library(dplyr)
 library(tidyr)
 library(dbplyr)
 library(data.table)
+library(DBI)
 
-source("~/Documents/Project/SLA/data/create_empty_data_frame.R")
-source("~/Documents/Project/SLA/scripts/FIRST_ATTEMPT_SLA/function_first_attempt.R")
+source("./scripts/2_LOAD_DATA/create_empty_data_frame.R")
+source("./scripts/A_FIRST_ATTEMPT_SLA/function_first_attempt.R")
 
 
 {
@@ -51,14 +52,14 @@ attempt_counter <- get_attempt_counter(attempt_temp_df)
 #### Joins
 ## Initialize table
 AWB <- Pickup$BILL_CODE
-TBL_ATTEMPT_TABLE <- data.table::data.table()#(length(AWB))
-# TBL_ATTEMPT_TABLE <- create_TBL_Attempt_TABLE(length(AWB))
+TBL_ATTEMPTS <- data.table::data.table()#(length(AWB))
+# TBL_ATTEMPTS <- create_TBL_ATTEMPTS(length(AWB))
 
 # Upload 
-TBL_ATTEMPT_TABLE$AWB <- AWB
+TBL_ATTEMPTS$AWB <- AWB
 up_timestamp <- gsub(pattern = "[^[:alnum:]]", replacement = "",Sys.time())
   
-TBL_ATTEMPT_TABLE <- TBL_ATTEMPT_TABLE %>% 
+TBL_ATTEMPTS <- TBL_ATTEMPTS %>% 
   left_join(f_attempt_df, copy = T) %>% 
   left_join(l_attempt_df, copy = T) %>% 
   left_join(attempt_counter, copy = T) %>% 
@@ -72,17 +73,19 @@ rm(Delivery, IssueParcel)
 rm(f_attempt_df, l_attempt_df, attempt_counter)
 
 ########################################################## 01. Connect to DB ###############################################################################
-SLA_temp_db <- DBI::dbConnect(RSQLite::SQLite(), "db/SLA_temp_DB.sqlite")
+### LOG: Change to Pool ###
+conn_SLA_temp_db <- DBI::dbConnect(RSQLite::SQLite(), "db/SLA_temp_DB.sqlite")
 
 ######################################################## 03. Write to DB #################################################################################
 # Update
 ##### $sql="UPDATE checkpoints SET CP2_Arrivale='".$cp."00' WHERE Team='".$Team."';
-copy_to(dest = SLA_temp_db, df = TBL_ATTEMPT_TABLE)
-
+DBI::dbWriteTable(conn = conn_SLA_temp_db, name = "TBL_ATTEMPTS", value = TBL_ATTEMPTS)
+# DBI::dbCommit(conn_SLA_temp_db)
 ########################################################## 02. Querries ########################################################################
-tbl(SLA_temp_db, sql("SELECT * FROM TBL_ATTEMPT_TABLE"))
+tbl(conn_SLA_temp_db, sql("SELECT * FROM TBL_ATTEMPTS"))
 
 ##
 
 ######################################################### 04. Close Connection ############################################################################
-DBI::dbDisconnect(SLA_temp_db)
+DBI::dbDisconnect(conn_SLA_temp_db)
+# DBI::dbRollback(SLA_temp_conn)
